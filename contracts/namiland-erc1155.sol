@@ -6,34 +6,31 @@ import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Burnable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
 contract NamiLandERC1155 is ERC1155, ERC1155Burnable, Ownable {
     using SafeMath for uint256;
     using Address for address;
     using EnumerableSet for EnumerableSet.UintSet;
+    using Strings for uint256;
 
-    mapping(address => bool) public creators;
     mapping(address => bool) public minters;
-    // uri mapping for tokenId
-    mapping(uint => string) private _uris;
-    mapping(uint => uint) private _idToType1;
-    mapping(uint => uint) private _idToType2;
-    // TokenId array
     EnumerableSet.UintSet private _tokenIds;
-    // Some default NFTs need to be locked.
     EnumerableSet.UintSet private _lockedTokenIds;
+
     mapping(uint => uint) public totalSupply;
     mapping(address => bool) public transferWhitelist;
 
     string public name;
     string public symbol;
+    string public baseTokenURI;
 
     constructor(string memory _uri, string memory _name, string memory _symbol) ERC1155(_uri) {
         name = _name;
         symbol = _symbol;
+        baseTokenURI = _uri;
     }
 
-    event Create(uint indexed tokenId, address indexed to, string uri, uint quantity, uint type1, uint type2);
     event Mint(uint indexed tokenId, address indexed to, uint quantity);
 
     // change the contract name
@@ -46,76 +43,34 @@ contract NamiLandERC1155 is ERC1155, ERC1155Burnable, Ownable {
         symbol = _symbol;
     }
 
-    // before calling this function, we should upload metadata of this NFT to IPFS.
-    // finally, minting a NFT by calling this function after getting the uri of ipfs.
-    function create(
-        uint tokenId,
-        address to,
-        string memory nftUrl,
-        uint quantity,
-        uint type1,
-        uint type2,
-        bytes memory data
-    ) external onlyCreator {
-        bytes memory uriBytes = bytes(nftUrl);
-        require(uriBytes.length != 0, "uri can not be null");
-        require(!_tokenIds.contains(tokenId), "tokenId is existed!");
-        _uris[tokenId] = nftUrl;
-        _tokenIds.add(tokenId);
-        totalSupply[tokenId] = totalSupply[tokenId].add(quantity);
-        _idToType1[tokenId] = type1;
-        _idToType2[tokenId] = type2;
-        _mint(to, tokenId, quantity, data);
-
-        emit Create(tokenId, to, nftUrl, quantity, type1, type2);
-    }
-
     function mint(uint tokenId, address to, uint quantity, bytes memory data) external onlyMinter {
         require(quantity > 0, "quantity cannot be 0!");
-        require(_tokenIds.contains(tokenId), "NFT has not been created!");
         totalSupply[tokenId] = totalSupply[tokenId].add(quantity);
         _mint(to, tokenId, quantity, data);
 
         emit Mint(tokenId, to, quantity);
     }
 
-    function changeMetadataURI(string memory newUri) external onlyOwner {
-        _setURI(newUri);
-    }
-
-    function changeUri(uint id, string memory newUri) external onlyCreator {
-        bytes memory uriBytes = bytes(newUri);
+    function changeBaseUri(string memory _newUri) external onlyOwner {
+        bytes memory uriBytes = bytes(_newUri);
         require(uriBytes.length != 0, "uri can not be null");
-        _uris[id] = newUri;
+        baseTokenURI = _newUri;
     }
 
     function uri(uint id) public override view returns(string memory) {
-        return _uris[id];
+        return bytes(baseTokenURI).length > 0 ? string(abi.encodePacked(baseTokenURI, id.toString())) : "";
     }
 
-    function addCreator(address account) external onlyOwner {
-        require(account != address(0), "creator can not be address 0");
-        creators[account] = true;
-    }
-
-    function removeCreator(address account) external onlyOwner {
-        creators[account] = false;
-    }
-
-    function addMinters(address account) external onlyOwner {
+    function setMinter(address account, bool isMinter) external onlyOwner {
         require(account != address(0), "minter can not be address 0");
-        minters[account] = true;
+        minters[account] = isMinter;
     }
 
-    function removeMinter(address account) external onlyOwner {
-        minters[account] = false;
-    }
-
-    function addLockedNFT(uint id) external onlyCreator {
+    function addLockedNFT(uint id) external onlyOwner {
         _lockedTokenIds.add(id);
     }
 
-    function cancelLockedNFT(uint id) external onlyCreator {
+    function cancelLockedNFT(uint id) external onlyOwner {
         _lockedTokenIds.remove(id);
     }
 
@@ -135,30 +90,14 @@ contract NamiLandERC1155 is ERC1155, ERC1155Burnable, Ownable {
         return _lockedTokenIds.at(index);
     }
 
-    function addIntoTransferWhitelist(address account) external onlyCreator {
+    function addIntoTransferWhitelist(address account) external onlyOwner {
         require(account != address(0), "Account is 0");
         transferWhitelist[account] = true;
     }
 
-    function removeFromTransferWhitelist(address account) external onlyCreator {
+    function removeFromTransferWhitelist(address account) external onlyOwner {
         require(account != address(0), "Account is 0");
         transferWhitelist[account] = false;
-    }
-
-    function getNFTType1(uint id) public view returns(uint) {
-        return _idToType1[id];
-    }
-
-    function changeNFTType1(uint id, uint newType) external onlyCreator {
-        _idToType1[id] = newType;
-    }
-
-    function getNFTType2(uint id) public view returns(uint) {
-        return _idToType2[id];
-    }
-
-    function changeNFTType2(uint id, uint newType) external onlyCreator {
-        _idToType2[id] = newType;
     }
 
     function safeTransferFrom(
@@ -189,11 +128,6 @@ contract NamiLandERC1155 is ERC1155, ERC1155Burnable, Ownable {
         }
 
         super.safeBatchTransferFrom(from, to, ids, amounts, data);
-    }
-
-    modifier onlyCreator() {
-        require(creators[msg.sender] == true, "restrict for creators!");
-        _;
     }
 
     modifier onlyMinter() {
